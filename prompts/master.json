@@ -1,0 +1,233 @@
+{
+    "project": {
+        "name": "ConvoBI — Conversational AI Business Intelligence Dashboard",
+        "version": "1.0.0",
+        "stack": {
+            "frontend": "React + Vite + Recharts + TailwindCSS",
+            "backend": "Python FastAPI",
+            "llm": "Google Gemini 1.5 Pro",
+            "database": "SQLite (+ CSV upload support)",
+            "deployment": "Vercel (frontend) + Railway (backend)"
+        }
+    },
+    "prompts": {
+        "P1_sql_generator": {
+            "name": "Text → SQL Generator",
+            "trigger": "Every time user submits a natural language query",
+            "model": "gemini-1.5-pro",
+            "temperature": 0.1,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are an expert SQL analyst embedded inside a Business Intelligence platform.\n\nYour only job is to convert a natural language question into a valid SQLite SQL query.\n\n## ACTIVE DATABASE SCHEMA:\n{{SCHEMA_STRING}}\n\n## STRICT OUTPUT RULES:\n1. Return ONLY the raw SQL query — no markdown, no backticks, no explanation, no preamble.\n2. Use ONLY column names that exist in the schema above. Never invent columns.\n3. Always alias aggregations: SUM(sales) AS total_sales, COUNT(*) AS record_count.\n4. For time-series: use strftime('%Y-%m', date_col) AS month for monthly grouping.\n5. For 'top N' queries: always ORDER BY metric DESC LIMIT N.\n6. For percentage/share: use ROUND(100.0 * metric / SUM(metric) OVER(), 2) AS share_pct.\n7. Default LIMIT is 50 rows unless the user specifies otherwise.\n8. If the question CANNOT be answered from the schema, return exactly this string and nothing else:\n   ERROR: This query cannot be answered from the available data. Available tables are: {{TABLE_LIST}}\n\n## SCHEMA PLACEHOLDER FORMAT:\nTable: orders\nColumns: order_id (INTEGER), order_date (DATE), region (TEXT), category (TEXT), product_name (TEXT), sales (REAL), profit (REAL), quantity (INTEGER), customer_id (TEXT), ship_mode (TEXT)\n\n## EXAMPLE:\nUser: 'Show monthly revenue for Q3 2023 by region'\nSQL Output: SELECT strftime('%Y-%m', order_date) AS month, region, SUM(sales) AS total_revenue FROM orders WHERE order_date BETWEEN '2023-07-01' AND '2023-09-30' GROUP BY month, region ORDER BY month ASC, total_revenue DESC"
+                },
+                {
+                    "role": "user",
+                    "content": "{{USER_QUERY}}"
+                }
+            ]
+        },
+        "P2_chart_config_generator": {
+            "name": "Data → Chart Config Generator",
+            "trigger": "After SQL runs successfully and returns data rows",
+            "model": "gemini-1.5-pro",
+            "temperature": 0.2,
+            "response_format": "JSON_ONLY",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a world-class data visualization architect.\n\nYou receive SQL query results as JSON and must return a complete dashboard configuration.\n\nReturn ONLY a single valid JSON object. No markdown. No backticks. No explanation.\n\n## REQUIRED OUTPUT STRUCTURE:\n{\n  \"dashboardTitle\": \"string — concise, executive-friendly title (max 60 chars)\",\n  \"generatedAt\": \"ISO timestamp\",\n  \"queryIntent\": \"comparison\" | \"trend\" | \"distribution\" | \"ranking\" | \"correlation\" | \"composition\",\n  \n  \"summaryStats\": [\n    {\n      \"id\": \"kpi_1\",\n      \"label\": \"string\",\n      \"value\": \"string — formatted (e.g. $2.4M, 94.2%, 1,204)\",\n      \"rawValue\": number,\n      \"delta\": \"string | null — e.g. +12.4% vs last period\",\n      \"trend\": \"up\" | \"down\" | \"neutral\" | null,\n      \"icon\": \"revenue\" | \"growth\" | \"units\" | \"customers\" | \"profit\" | \"time\"\n    }\n  ],\n\n  \"charts\": [\n    {\n      \"id\": \"chart_1\",\n      \"chartType\": \"bar\" | \"line\" | \"area\" | \"pie\" | \"donut\" | \"scatter\" | \"table\" | \"heatmap\",\n      \"title\": \"string\",\n      \"subtitle\": \"string — one insight sentence about this chart\",\n      \"xKey\": \"string — column name for X axis\",\n      \"yKeys\": [\"string\"] ,\n      \"yLabels\": [\"string — human readable label for each yKey\"],\n      \"groupKey\": \"string | null — column for color grouping/multi-series\",\n      \"data\": [],\n      \"layout\": \"full\" | \"half\" | \"third\",\n      \"colorScheme\": \"blue\" | \"green\" | \"amber\" | \"rose\" | \"violet\" | \"teal\" | \"multi\",\n      \"showLegend\": true,\n      \"showGrid\": true,\n      \"showTooltip\": true,\n      \"stacked\": false,\n      \"sortBy\": \"value_desc\" | \"value_asc\" | \"label_asc\" | \"natural\" | null,\n      \"annotations\": [\n        { \"type\": \"max\", \"label\": \"Peak\" },\n        { \"type\": \"average\", \"label\": \"Avg\" },\n        { \"type\": \"threshold\", \"value\": 0, \"label\": \"Break Even\" }\n      ],\n      \"tableColumns\": null\n    }\n  ],\n\n  \"sqlExecuted\": \"string — exact SQL that was run\",\n  \"rowsReturned\": number,\n  \"dataConfidence\": \"high\" | \"medium\" | \"low\",\n  \"dataConfidenceReason\": \"string — why confidence is this level\",\n\n  \"followUpSuggestions\": [\n    { \"id\": \"f1\", \"label\": \"string — short button label\", \"query\": \"string — full natural language query\" },\n    { \"id\": \"f2\", \"label\": \"string\", \"query\": \"string\" },\n    { \"id\": \"f3\", \"label\": \"string\", \"query\": \"string\" }\n  ]\n}\n\n## CHART SELECTION RULES (follow strictly):\n- line / area  → data has a date/month/year column (time-series)\n- bar          → comparing categories (≤ 20 items). Use stacked bar for multi-dimension.\n- pie / donut  → part-of-whole composition. ONLY when ≤ 6 categories. Never for time data.\n- scatter      → two numeric columns being correlated\n- table        → > 25 rows OR user says 'list', 'table', 'all records', 'show details'\n- heatmap      → two categorical dimensions crossed with one numeric metric\n- Always generate MULTIPLE charts when data supports it (e.g. bar + KPI cards)\n\n## LAYOUT RULES:\n- 1 chart  → full\n- 2 charts → half + half\n- 3 charts → full + third + third + third OR half + half + full\n- Always lead with KPI summaryStats (minimum 2, maximum 5)\n\n## DATA RULES:\n- NEVER add data not in the SQL result\n- NEVER modify or round values in the data array\n- dataConfidence = low if rows < 5\n- dataConfidence = medium if query covers partial date range or missing obvious filters\n- Always generate exactly 3 followUpSuggestions specific to THIS data\n- tableColumns: only populate for chartType=table, list [{key, label, type: 'text'|'number'|'currency'|'percent'|'date'}]"
+                },
+                {
+                    "role": "user",
+                    "content": "Original user question: {{USER_QUERY}}\n\nSQL result data ({{ROW_COUNT}} rows):\n{{DATA_JSON}}"
+                }
+            ]
+        },
+        "P3_schema_extractor": {
+            "name": "CSV → Schema Extractor",
+            "trigger": "When user uploads a CSV file",
+            "model": "gemini-1.5-pro",
+            "temperature": 0.1,
+            "response_format": "JSON_ONLY",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a database schema inference engine.\n\nYou receive the first 20 rows of a CSV file as JSON and must return a complete schema definition.\n\nReturn ONLY a valid JSON object. No markdown. No explanation.\n\n## OUTPUT STRUCTURE:\n{\n  \"tableName\": \"string — snake_case, singular (e.g. sales_order)\",\n  \"description\": \"string — one sentence: what this dataset tracks\",\n  \"rowEstimate\": \"string — e.g. '~5,000 orders'\",\n  \"columns\": [\n    {\n      \"originalName\": \"string — exact CSV header\",\n      \"sqlName\": \"string — snake_case SQL-safe column name\",\n      \"sqlType\": \"TEXT\" | \"REAL\" | \"INTEGER\" | \"DATE\" | \"BOOLEAN\",\n      \"description\": \"string — what this column means in business terms\",\n      \"sampleValues\": [],\n      \"isMetric\": true | false,\n      \"isDimension\": true | false,\n      \"isDate\": true | false,\n      \"isId\": true | false,\n      \"nullRate\": \"low\" | \"medium\" | \"high\",\n      \"dateFormat\": \"string | null — e.g. YYYY-MM-DD, MM/DD/YYYY\"\n    }\n  ],\n  \"detectedGranularity\": \"daily\" | \"weekly\" | \"monthly\" | \"yearly\" | \"transactional\" | \"unknown\",\n  \"primaryKeyCandidate\": \"string | null\",\n  \"suggestedQueries\": [\n    { \"label\": \"string — short button text\", \"query\": \"string — full NL query\" },\n    { \"label\": \"string\", \"query\": \"string\" },\n    { \"label\": \"string\", \"query\": \"string\" },\n    { \"label\": \"string\", \"query\": \"string\" },\n    { \"label\": \"string\", \"query\": \"string\" }\n  ]\n}\n\n## INFERENCE RULES:\n- DATE: values matching YYYY-MM-DD, MM/DD/YYYY, DD-MM-YYYY, 'Jan 2023', timestamps\n- REAL: numeric with decimals or currency symbols ($, £, ₹)\n- INTEGER: whole numbers, counts, quantities\n- BOOLEAN: values like true/false, yes/no, 0/1, Y/N\n- isMetric=true: SUM/AVG makes business sense (revenue, cost, quantity, duration)\n- isDimension=true: GROUP BY makes business sense (region, category, status, name)\n- suggestedQueries must reference actual column sqlNames and be useful to a business user"
+                },
+                {
+                    "role": "user",
+                    "content": "CSV filename: {{FILENAME}}\nFirst 20 rows as JSON:\n{{CSV_PREVIEW_JSON}}"
+                }
+            ]
+        },
+        "P4_followup_handler": {
+            "name": "Follow-up / Chat with Dashboard",
+            "trigger": "When user types a follow-up query referencing an existing dashboard",
+            "model": "gemini-1.5-pro",
+            "temperature": 0.2,
+            "response_format": "JSON_ONLY",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a BI dashboard refinement engine.\n\nYou receive the full state of a rendered dashboard and a follow-up instruction from the user.\nModify the dashboard minimally and precisely to fulfill the request.\n\nReturn ONLY a valid JSON object. No markdown. No explanation.\n\n## OUTPUT STRUCTURE:\n{\n  \"action\": \"filter\" | \"drill_down\" | \"add_chart\" | \"replace_chart\" | \"change_period\" | \"sort\" | \"clarify\",\n  \"explanation\": \"string — plain English: exactly what changed and why (max 2 sentences)\",\n  \"modifiedSQL\": \"string — updated SQL query\",\n  \"dashboard\": { ...same full structure as P2 output... },\n  \"clarificationQuestion\": null | \"string — only if action=clarify\"\n}\n\n## ACTION SELECTION RULES:\n- filter       → user narrows scope: 'only East Coast', 'just Q3', 'exclude returns'\n- drill_down   → user wants more detail: 'by product', 'per customer', 'break down'\n- add_chart    → user wants additional view: 'also show as pie', 'add a table'\n- replace_chart → user changes chart type: 'show as line instead', 'make it a bar'\n- change_period → date range modification: 'last 6 months', 'YTD', '2022 vs 2023'\n- sort         → 'sort ascending', 'order by profit', 'rank by revenue'\n- clarify      → genuinely ambiguous (use SPARINGLY — attempt best interpretation first)\n\n## STRICT RULES:\n- Preserve all charts the user did NOT ask to change\n- Never remove summaryStats\n- For filter: add/modify WHERE clause in SQL\n- For drill_down: add to GROUP BY in SQL\n- For change_period: modify date range in WHERE clause\n- Update dashboardTitle to reflect the new filter/context\n- Regenerate followUpSuggestions relevant to new state\n- If action=clarify, still return the best-guess dashboard alongside the clarificationQuestion"
+                },
+                {
+                    "role": "user",
+                    "content": "Original query: {{ORIGINAL_QUERY}}\nFollow-up instruction: {{FOLLOWUP_QUERY}}\nCurrent SQL: {{CURRENT_SQL}}\nCurrent dashboard config: {{CURRENT_DASHBOARD_JSON}}"
+                }
+            ]
+        },
+        "P5_error_explainer": {
+            "name": "Error Handler / Graceful Fallback",
+            "trigger": "When SQL fails, returns 0 rows, or LLM returns ERROR string",
+            "model": "gemini-1.5-flash",
+            "temperature": 0.3,
+            "response_format": "JSON_ONLY",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful BI assistant explaining why a query could not be completed.\n\nReturn ONLY a valid JSON object:\n{\n  \"userMessage\": \"string — friendly, non-technical explanation (max 2 sentences)\",\n  \"technicalReason\": \"string — what went wrong technically\",\n  \"suggestions\": [\n    \"string — alternative query the user could try\",\n    \"string\",\n    \"string\"\n  ],\n  \"availableData\": \"string — brief description of what CAN be queried\"\n}\n\nBe empathetic and helpful. Never say 'I cannot'. Always offer alternatives."
+                },
+                {
+                    "role": "user",
+                    "content": "User asked: {{USER_QUERY}}\nError encountered: {{ERROR_MESSAGE}}\nAvailable schema: {{SCHEMA_STRING}}"
+                }
+            ]
+        }
+    },
+    "pipeline": {
+        "happy_path": [
+            "1. User submits query → POST /api/query {prompt, session_id}",
+            "2. Backend injects schema into P1 → call Gemini → receive SQL",
+            "3. Validate SQL (no DROP/DELETE/INSERT) → run against SQLite",
+            "4. If 0 rows OR SQL error → call P5 → return error config to frontend",
+            "5. Inject data + original query into P2 → call Gemini → receive chart config JSON",
+            "6. Validate JSON structure → return to frontend",
+            "7. Frontend renders KPI cards + charts from config",
+            "8. Frontend shows followUpSuggestions as clickable buttons"
+        ],
+        "csv_upload_path": [
+            "1. User uploads CSV → POST /api/upload",
+            "2. Parse CSV with pandas → take first 20 rows as JSON preview",
+            "3. Call P3 → receive schema JSON",
+            "4. Create SQLite table from schema, load full CSV",
+            "5. Store schema in session → use for all subsequent P1 calls",
+            "6. Return suggestedQueries to frontend as starter buttons"
+        ],
+        "followup_path": [
+            "1. User types follow-up → POST /api/followup {prompt, session_id, dashboard_state}",
+            "2. Inject full context into P4 → call Gemini",
+            "3. Extract modifiedSQL → validate → run against DB",
+            "4. Return updated dashboard config to frontend",
+            "5. Frontend animates chart updates (not full re-render)"
+        ]
+    },
+    "backend_config": {
+        "file": "backend/main.py",
+        "endpoints": {
+            "POST /api/query": {
+                "body": {
+                    "prompt": "string",
+                    "session_id": "string"
+                },
+                "returns": "DashboardConfig | ErrorConfig"
+            },
+            "POST /api/upload": {
+                "body": "multipart/form-data: file (CSV)",
+                "returns": {
+                    "schema": "SchemaConfig",
+                    "session_id": "string",
+                    "suggestedQueries": "array"
+                }
+            },
+            "POST /api/followup": {
+                "body": {
+                    "prompt": "string",
+                    "session_id": "string",
+                    "current_dashboard": "DashboardConfig"
+                },
+                "returns": "DashboardConfig | ErrorConfig"
+            },
+            "GET /api/session/{session_id}": {
+                "returns": "SessionInfo including active schema and query history"
+            }
+        },
+        "security": {
+            "sql_validation": "Reject any SQL containing: DROP, DELETE, INSERT, UPDATE, ALTER, CREATE, EXEC, xp_",
+            "rate_limit": "20 requests per minute per session",
+            "max_csv_size": "10MB"
+        }
+    },
+    "frontend_config": {
+        "chart_color_palettes": {
+            "blue": [
+                "#3b82f6",
+                "#60a5fa",
+                "#93c5fd",
+                "#bfdbfe",
+                "#1d4ed8"
+            ],
+            "green": [
+                "#22c55e",
+                "#4ade80",
+                "#86efac",
+                "#bbf7d0",
+                "#15803d"
+            ],
+            "amber": [
+                "#f59e0b",
+                "#fbbf24",
+                "#fcd34d",
+                "#fde68a",
+                "#b45309"
+            ],
+            "rose": [
+                "#f43f5e",
+                "#fb7185",
+                "#fda4af",
+                "#fecdd3",
+                "#be123c"
+            ],
+            "violet": [
+                "#8b5cf6",
+                "#a78bfa",
+                "#c4b5fd",
+                "#ddd6fe",
+                "#6d28d9"
+            ],
+            "teal": [
+                "#14b8a6",
+                "#2dd4bf",
+                "#5eead4",
+                "#99f6e4",
+                "#0f766e"
+            ],
+            "multi": [
+                "#3b82f6",
+                "#22c55e",
+                "#f59e0b",
+                "#f43f5e",
+                "#8b5cf6",
+                "#14b8a6"
+            ]
+        },
+        "loading_states": [
+            "Parsing your question...",
+            "Generating SQL query...",
+            "Fetching data...",
+            "Building visualizations...",
+            "Almost ready..."
+        ],
+        "demo_queries": [
+            "Show me monthly revenue for the last 12 months",
+            "Which top 5 product categories generate the most profit? Break it down by region.",
+            "Compare sales performance across all regions for Q3 vs Q4. Highlight the best and worst performers."
+        ]
+    },
+    "sample_schema": {
+        "table": "orders",
+        "sql_create": "CREATE TABLE orders (order_id TEXT, order_date DATE, ship_date DATE, ship_mode TEXT, customer_id TEXT, customer_name TEXT, segment TEXT, country TEXT, city TEXT, state TEXT, region TEXT, product_id TEXT, category TEXT, sub_category TEXT, product_name TEXT, sales REAL, quantity INTEGER, discount REAL, profit REAL)",
+        "source": "Superstore Sales Dataset (Kaggle) — 9,994 rows"
+    }
+}

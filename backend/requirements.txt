@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pydantic
+pandas
+sqlite3; sys_platform == "win32"
+google-genai
+python-multipart
+kaggle
+faker
+python-dotenv
