@@ -18,6 +18,7 @@ function App() {
 
     const [dashboardData, setDashboardData] = useState(null);
     const [activeDomainName, setActiveDomainName] = useState(null);
+    const [activeDomainId, setActiveDomainId] = useState(null);
     const [history, setHistory] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [showUpload, setShowUpload] = useState(false);
@@ -58,10 +59,11 @@ function App() {
                 };
             } else {
                 endpoint = `${API}/api/query`;
+                const preferredDomain = forceDomain || (activeDomainId === 'custom' && view === 'dashboard' ? 'custom' : null);
                 body = {
                     prompt: queryText,
                     session_id: sessionId,
-                    domain: forceDomain || 'auto'
+                    domain: preferredDomain || 'auto'
                 };
             }
 
@@ -79,6 +81,7 @@ function App() {
                 setDashboardData(data);
                 setView('dashboard');
                 setActiveDomainName(data.routed_domain_name || data.domain || 'AI');
+                setActiveDomainId(data.routed_domain || forceDomain || null);
                 setHistory(prev => [...prev, {
                     query: queryText,
                     dashboard_title: data.dashboardTitle || 'AI Answer',
@@ -109,6 +112,7 @@ function App() {
                 if (data.session_id) setSessionId(data.session_id);
                 setView('dashboard');
                 setActiveDomainName(data.routed_domain_name || "Custom Upload");
+                setActiveDomainId('custom');
                 setDashboardData(data);
                 setHistory([{ query: "Auto-Analysis", dashboard_title: data.dashboardTitle, domain: "custom" }]);
             } else {
@@ -126,12 +130,12 @@ function App() {
         setDashboardData(null);
         setErrorObj(null);
         setActiveDomainName(null);
+        setActiveDomainId(null);
     };
 
     const newQuery = () => {
         setDashboardData(null);
         setErrorObj(null);
-        setActiveDomainName(null);
         setView('dashboard');
     };
 
@@ -144,6 +148,7 @@ function App() {
             if (data.type === "dashboard") {
                 setView('dashboard');
                 setActiveDomainName(data.routed_domain_name || domain.name);
+                setActiveDomainId(data.routed_domain || domain.id);
                 setDashboardData(data);
                 setHistory([{ query: "Auto-Analysis", dashboard_title: data.dashboardTitle, domain: domain.id }]);
             } else {
