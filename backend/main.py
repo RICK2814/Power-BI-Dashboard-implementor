@@ -153,12 +153,13 @@ def process_query(req: QueryRequest):
 
         if domain_id == "custom":
             schema_string = session.get("schema_string", "No custom schema available.")
+            custom_table_name = session.get("table_name") or session.get("schema", {}).get("tableName", "uploaded_data")
             domain_meta = {
                 "name": "Custom Data",
                 "key_metrics": ", ".join(session.get("schema", {}).get("keyMetrics", [])),
                 "date_columns": "",
                 "dimension_columns": ", ".join(session.get("schema", {}).get("keyDimensions", [])),
-                "table": session.get("schema", {}).get("tableName", "uploaded_data")
+                "table": custom_table_name
             }
         else:
             domain_meta = DOMAINS[domain_id]
